@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>My first three.js app</title>
+<style>
+body {
+	margin: 0;
+}
+
+canvas {
+	width: 100vw;
+	height: 100vh;
+	display: block;
+}
+</style>
+
+<script type="text/x-vertex-shader" id="render-vs">
+#version 300 es
+
+precision highp float;
+
+layout(location = 0) in vec2 position;
+layout(location = 1) in vec2 speed;
+
+out float normalizedSpeed;
+
+uniform float maxSpeed;
+
+void main() {
+	gl_PointSize = 1.0;
+  	gl_Position = vec4(position, 0.0, 1.0);
+ 	normalizedSpeed = length(speed) / maxSpeed;
+}
+</script>
+
+<script type="text/x-fragment-shader" id="render-fs">
+#version 300 es
+
+precision highp float;
+
+in float normalizedSpeed;
+
+out vec4 color;
+
+void main() {
+    color = vec4(1.0 - normalizedSpeed, normalizedSpeed, 0.0, 1.0);
+    //color = vec4(1.0, 0.0 , 0.0, 1.0);
+}
+</script>
+
+<script type="text/x-vertex-shader" id="update-vs">
+#version 300 es
+
+precision highp float;
+precision lowp int;
+
+layout(location = 0) in vec2 position;
+layout(location = 1) in vec2 speed;
+
+out vec2 outputPosition;
+out vec2 outputSpeed;
+
+uniform float elapsed;
+uniform vec2 target;
+uniform float maxSpeed;
+uniform float acceleration;
+uniform int mode;
+
+void main() {
+	vec2 heading;
+	switch(mode) {
+		case 0:
+			heading = normalize(target - position);
+			break; 
+		case 1:
+			heading = -normalize(target - position);
+			break; 
+		case 2:
+			heading = normalize(speed);
+			break; 
+	}
+
+	vec2 velocity = speed + heading * (acceleration * elapsed);
+	if (length(velocity) > maxSpeed)
+		velocity = normalize(velocity) * maxSpeed;
+	outputPosition = position + velocity * elapsed;
+	outputSpeed = velocity;
+}
+</script>
+
+<script type="text/x-fragment-shader" id="dummy-fs">
+#version 300 es
+
+precision highp float;
+
+out vec4 color;
+
+void main() {
+	color = vec4(1.0);
+}
+</script>
+
+
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script src="script/particles.js"></script>
+</body>
+</html>
