@@ -2,127 +2,76 @@
 
 (function() {
 
-  function Program(program) {
-    var uniformLocations = {};
-
-    this.use = function() {
-      gl.useProgram(program);
-    }
-
-    this.uniformLocation = function(name) {
-      if (!uniformLocations[name]) {
-        uniformLocations[name] = gl.getUniformLocation(program, name);
-      }
-      return uniformLocations[name];
-    }
-  }
-
   function queryParam(key) {
-    return unescape(window.location.search.replace(new RegExp("^(?:.*[&\\?]" + escape(key).replace(/[\.\+\*]/g, "\\$&")
-        + "(?:\\=([^&]*))?)?.*$", "i"), "$1"));
+    const regex = new RegExp('[?&]' + key + '=([^&]+)');
+    let match = window.location.search.match(regex);
+    return match && unescape(match[1]);
   }
 
-  var canvas;
-  var gl;
+  const MAX_PARTICLES = 2000000;
 
-  var particleCount = queryParam('n') || 100000;
-  var maxSpeed = 1.2;
-  var acceleration = 2;
+  const MODE_ATTRACT = 0;
+  const MODE_REPULSE = 1;
+  const MODE_RELAX = 2;
 
-  var vaos = [];
-  var vbos = [];
-  var bufferIndex = 0;
+  // the GL context
+  let gl;
 
-  var renderProgram, transformProgram;
-  var transformFeedback;
-  var lastTick = 0;
+  let particleCount = 0;
+
+  // shader uniforms
+  let maxSpeed = parseFloat(queryParam('s')) || 1.2;
+  let acceleration = parseFloat(queryParam('a')) || 2;
+  let mode = MODE_ATTRACT;
+  let target = {
+    x : 0,
+    y : 0
+  };
+  let uniformUpdates = {};
+
+  let vaos, vbos;
+  let bufferIndex = 0;
+
+  let renderProgram, transformProgram;
+  let transformFeedback;
+  let lastTick = 0;
+
+  let fpsSpan;
+  let frames = 0;
+  let fpsStart;
+  let hudInputs;
 
   function reportError(msg) {
     console.error(msg);
   }
 
-  function setup() {
-    canvas = document.getElementById("canvas");
-    gl = canvas.getContext("webgl2");
-    if (!gl) {
-      reportError("No webgl 2");
-      return;
-    }
-
-    renderProgram = loadProgram('render-vs', 'render-fs');
-    renderProgram.use();
-    gl.uniform1f(renderProgram.uniformLocation('maxSpeed'), maxSpeed);
-
-    transformProgram = loadProgram('update-vs', 'dummy-fs', [ 'outputPosition', 'outputSpeed' ]);
-    transformProgram.use();
-    gl.uniform1f(transformProgram.uniformLocation('maxSpeed'), maxSpeed);
-    gl.uniform2f(transformProgram.uniformLocation('target'), 0, 0);
-    gl.uniform1f(transformProgram.uniformLocation('acceleration'), acceleration);
-    gl.uniform1i(transformProgram.uniformLocation('mode'), 0);
-
-    vbos[0] = createVBO(createParticles());
-    vbos[1] = createVBO();
-
-    vaos[0] = gl.createVertexArray();
-    bindAttributes(0);
-
-    vaos[1] = gl.createVertexArray();
-    bindAttributes(1);
-
-    transformFeedback = gl.createTransformFeedback();
-
-    switchBuffer(0);
-
-    window.onresize = onresize;
-    onresize();
-
-    canvas.onmousemove = function(event) {
-      var x = (event.clientX / canvas.width) * 2 - 1;
-      var y = (1 - (event.clientY / canvas.height)) * 2 - 1;
-      transformProgram.use();
-      gl.uniform2f(transformProgram.uniformLocation('target'), x, y);
-    }
-
-    canvas.onmousedown = function(e) {
-      var mode;
-      switch (e.button) {
-      case 0:
-        mode = 1;
-        break;
-      case 2:
-        mode = 2;
-        break;
-      default:
-        mode = 0;
-        break;
-      }
-      transformProgram.use();
-      gl.uniform1i(transformProgram.uniformLocation('mode'), mode);
-    };
-
-    canvas.onmouseup = function(e) {
-      transformProgram.use();
-      gl.uniform1i(transformProgram.uniformLocation('mode'), 0);
-    };
-
-    document.oncontextmenu = function() {
-      return false;
-    }
-
-  }
-
   function loop(ts) {
-    update(ts || 0);
+    update(ts);
     render();
+    uniformUpdates = {};
+    frames++;
     window.requestAnimationFrame(loop);
   }
 
   function update(ts) {
     transformProgram.use();
 
+    if (uniformUpdates.mode) {
+      gl.uniform1i(transformProgram.uniforms.mode, mode);
+    }
+    if (uniformUpdates.target) {
+      gl.uniform2f(transformProgram.uniforms.target, target.x, target.y);
+    }
+    if (uniformUpdates.maxSpeed) {
+      gl.uniform1f(transformProgram.uniforms.maxSpeed, maxSpeed);
+    }
+    if (uniformUpdates.acceleration) {
+      gl.uniform1f(transformProgram.uniforms.acceleration, acceleration);
+    }
+
     let elapsed = (ts - lastTick) / 1000;
     lastTick = ts;
-    gl.uniform1f(transformProgram.uniformLocation('elapsed'), elapsed);
+    gl.uniform1f(transformProgram.uniforms.elapsed, elapsed);
 
     gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, transformFeedback);
     gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, vbos[bufferIndex == 0 ? 1 : 0]);
@@ -132,7 +81,7 @@
     gl.beginTransformFeedback(gl.POINTS);
     gl.drawArrays(gl.POINTS, 0, particleCount);
     gl.endTransformFeedback();
-    gl.flush();
+    // gl.flush();
 
     gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
     gl.disable(gl.RASTERIZER_DISCARD);
@@ -146,7 +95,85 @@
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     renderProgram.use();
+    if (uniformUpdates.maxSpeed) {
+      gl.uniform1f(renderProgram.uniforms.maxSpeed, maxSpeed);
+    }
     gl.drawArrays(gl.POINTS, 0, particleCount);
+  }
+
+  function switchBuffer(index) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbos[index]);
+    gl.bindVertexArray(vaos[index]);
+    bufferIndex = index;
+  }
+
+  function onresize() {
+    const width = gl.canvas.clientWidth | 0;
+    const height = gl.canvas.clientHeight | 0;
+    if (gl.canvas.width !== width || gl.canvas.height !== height) {
+      gl.canvas.width = width;
+      gl.canvas.height = height;
+    }
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+  }
+
+  function createProgram(vsName, fsName, varyings) {
+    let vs = createShader(gl.VERTEX_SHADER, shaderSource(vsName));
+    let fs = createShader(gl.FRAGMENT_SHADER, shaderSource(fsName));
+    let program = gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    if (varyings) {
+      gl.transformFeedbackVaryings(program, varyings, gl.INTERLEAVED_ATTRIBS);
+    }
+    gl.linkProgram(program);
+
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+
+    if (gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+      let uniforms = {};
+      for (let i = 0; i < numUniforms; ++i) {
+        const info = gl.getActiveUniform(program, i);
+        uniforms[info.name] = gl.getUniformLocation(program, info.name);
+      }
+      return {
+        uniforms : uniforms,
+        use : function() {
+          gl.useProgram(program);
+        }
+      };
+    }
+
+    let log = gl.getProgramInfoLog(program);
+    gl.deleteProgram(program);
+    throw "Error linking program " + log;
+  }
+
+  function shaderSource(name) {
+    return document.getElementById(name).text.trim();
+  }
+
+  function createShader(type, source) {
+    let shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      return shader;
+    }
+
+    let log = gl.getShaderInfoLog(shader);
+    gl.deleteShader(shader);
+    throw "Error creating shader " + source + "\n" + log;
+  }
+
+  function createVBO() {
+    let res = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, res);
+    gl.bufferData(gl.ARRAY_BUFFER, MAX_PARTICLES * 4 * 4, gl.DYNAMIC_COPY);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    return res;
   }
 
   function bindAttributes(index) {
@@ -161,97 +188,27 @@
     gl.enableVertexAttribArray(speed);
     gl.vertexAttribPointer(speed, 2, gl.FLOAT, false, 4 * 4, 2 * 4);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, null);
     gl.bindVertexArray(null);
-  }
-
-  function switchBuffer(index) {
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbos[index]);
-    gl.bindVertexArray(vaos[index]);
-    bufferIndex = index;
-  }
-
-  function onresize() {
-    resizeCanvasToDisplaySize(canvas);
-    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-  }
-
-  function resizeCanvasToDisplaySize(canvas, multiplier) {
-    multiplier = multiplier || 1;
-    const width = canvas.clientWidth * multiplier | 0;
-    const height = canvas.clientHeight * multiplier | 0;
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
-      return true;
-    }
-    return false;
-  }
-
-  function loadProgram(vsName, fsName, varyings) {
-    var vs = createShader(gl.VERTEX_SHADER, shaderSource(vsName));
-    var fs = fsName ? createShader(gl.FRAGMENT_SHADER, shaderSource(fsName)) : null;
-    return createProgram(vs, fs, varyings);
-  }
-
-  function createProgram(vs, fs, varyings) {
-    var program = gl.createProgram();
-    gl.attachShader(program, vs);
-    if (fs) {
-      gl.attachShader(program, fs);
-    }
-
-    if (varyings) {
-      gl.transformFeedbackVaryings(program, varyings, gl.INTERLEAVED_ATTRIBS);
-    }
-
-    gl.linkProgram(program);
-
-    gl.deleteShader(vs);
-    if (fs) {
-      gl.deleteShader(fs);
-    }
-
-    if (gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      return new Program(program);
-    }
-
-    var log = gl.getProgramInfoLog(program);
-    gl.deleteProgram(program);
-    throw "Error linking program " + log;
-  }
-
-  function shaderSource(name) {
-    return document.getElementById(name).text.trim();
-  }
-
-  function createShader(type, source) {
-    var shader = gl.createShader(type);
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      return shader;
-    }
-
-    var log = gl.getShaderInfoLog(shader);
-    gl.deleteShader(shader);
-    throw "Error creating shader " + source + "\n" + log;
-  }
-
-  function createVBO(buffer) {
-    let res = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, res);
-    gl.bufferData(gl.ARRAY_BUFFER, buffer || new Float32Array(particleCount * 4), gl.DYNAMIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
-    return res;
   }
 
-  function createParticles() {
-    let res = new Float32Array(particleCount * 4);
+  function setParticleCount(count) {
+    count = Math.min(count, MAX_PARTICLES);
+    if (count > particleCount) {
+      let newParticles = createParticles(count - particleCount);
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbos[0]);
+      gl.bufferSubData(gl.ARRAY_BUFFER, particleCount * 4 * 4, newParticles, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    }
+    particleCount = count;
+  }
+
+  function createParticles(count) {
+    let res = new Float32Array(count * 4);
     let range = Math.sqrt(maxSpeed * 2);
     let halfRange = range / 2;
     let target = 0;
-    for (let i = 0; i < particleCount; i++) {
+    for (let i = 0; i < count; i++) {
       // position
       res[target++] = Math.random() * 2 - 1;
       res[target++] = Math.random() * 2 - 1;
@@ -263,6 +220,154 @@
     return res;
   }
 
+  function setMode(m) {
+    mode = m;
+    uniformUpdates.mode = true;
+  }
+
+  function setTarget(screenX, screenY) {
+    target.x = (screenX / gl.canvas.width) * 2 - 1;
+    target.y = (1 - (screenY / gl.canvas.height)) * 2 - 1;
+    uniformUpdates.target = true;
+  }
+
+  function updateFps() {
+    let elapsed = (performance.now() - fpsStart) / 1000;
+    fpsSpan.textContent = Math.round(frames / elapsed);
+    frames = 0;
+    fpsStart = performance.now();
+    setTimeout(updateFps, 1000);
+  }
+
+  function hideInputs() {
+    hudInputs.className = 'hidden';
+    hudInputs.style.height = hudInputs.style.width = '0';
+  }
+
+  function showInputs() {
+    hudInputs.style.width = hudInputs.scrollWidth + 'px';
+    hudInputs.style.height = hudInputs.scrollHeight + 'px';
+    hudInputs.className = null;
+  }
+
+  function setup() {
+    let canvas = document.getElementById("canvas");
+    fpsSpan = document.getElementById("fps-value");
+    gl = canvas.getContext("webgl2");
+    if (!gl) {
+      reportError("No webgl 2");
+      return;
+    }
+
+    renderProgram = createProgram('render-vs', 'render-fs');
+    renderProgram.use();
+    gl.uniform1f(renderProgram.uniforms.maxSpeed, maxSpeed);
+
+    transformProgram = createProgram('update-vs', 'dummy-fs', [ 'outputPosition', 'outputSpeed' ]);
+    transformProgram.use();
+    gl.uniform1f(transformProgram.uniforms.maxSpeed, maxSpeed);
+    gl.uniform1f(transformProgram.uniforms.acceleration, acceleration);
+
+    vbos = [ createVBO(), createVBO() ];
+    let count = Math.min(parseInt(queryParam('p')) || 100000, MAX_PARTICLES)
+    setParticleCount(count);
+
+    vaos = [ gl.createVertexArray(), gl.createVertexArray() ];
+
+    bindAttributes(0);
+    bindAttributes(1);
+
+    transformFeedback = gl.createTransformFeedback();
+
+    switchBuffer(0);
+
+    window.onresize = onresize;
+    onresize();
+
+    canvas.ontouchstart = function(event) {
+      event.preventDefault();
+      setTarget(event.touches[0].clientX, event.touches[0].clientY);
+      setMode(MODE_REPULSE);
+    }
+
+    canvas.ontouchmove = function(event) {
+      event.preventDefault();
+      setTarget(event.touches[0].clientX, event.touches[0].clientY);
+      if (mode == MODE_REPULSE)
+        setMode(MODE_ATTRACT);
+    }
+
+    canvas.ontouchend = function(event) {
+      event.preventDefault();
+      setMode(MODE_ATTRACT);
+    }
+
+    canvas.onmousemove = function(event) {
+      setTarget(event.clientX, event.clientY);
+    }
+
+    canvas.onmousedown = function(e) {
+      mode = e.button == 0 ? MODE_REPULSE : e.button == 2 ? MODE_RELAX : MODE_ATTRACT;
+      uniformUpdates.mode = true;
+      setTarget(event.clientX, event.clientY);
+    };
+
+    canvas.onmouseup = function(e) {
+      mode = MODE_ATTRACT;
+      uniformUpdates.mode = true;
+    };
+
+    document.onmouseleave = function(e) {
+      target.x = target.y = 0;
+      uniformUpdates.target = true;
+    }
+
+    document.oncontextmenu = function() {
+      return false;
+    }
+
+    document.onvisibilitychange = function() {
+      // simulate a pause in the rendering
+      if (!document.hidden) {
+        lastTick = performance.now();
+      }
+    };
+
+    let hudTrigger = document.getElementById("hud-trigger");
+    hudInputs = document.getElementById("hud-inputs");
+
+    hudTrigger.onclick = function(e) {
+      if (hudInputs.className == 'hidden') {
+        showInputs();
+      } else {
+        hideInputs();
+      }
+    }
+
+    let particlesInput = document.getElementById('particles');
+    particlesInput.value = particleCount;
+    particlesInput.onchange = function(e) {
+      setParticleCount(parseInt(particlesInput.value));
+    };
+
+    let maxSpeedInput = document.getElementById('max-speed');
+    maxSpeedInput.value = maxSpeed;
+    maxSpeedInput.onchange = function(e) {
+      maxSpeed = parseFloat(maxSpeedInput.value);
+      uniformUpdates.maxSpeed = true;
+    };
+
+    let accelerationInput = document.getElementById('acceleration');
+    accelerationInput.value = acceleration;
+    accelerationInput.onchange = function(e) {
+      acceleration = parseFloat(accelerationInput.value);
+      uniformUpdates.acceleration = true;
+    };
+
+    fpsStart = performance.now();
+    updateFps();
+  }
+
   setup();
-  loop();
+  window.requestAnimationFrame(loop);
 })();

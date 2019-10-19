@@ -10,3 +10,4 @@ https://jsfiddle.net/rad4vwhe/2/
 left mouse button: repulse
 right mouse button: relax
 
+A demo can be found [here](http://marcflament.free.fr/webgl-particles/particles.html)
