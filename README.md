@@ -9,4 +9,4 @@ Used TransformFeedback to update particles position and velocity using a vertex 
 left mouse button: repulse
 right mouse button: relax
 
-A demo can be found [here](http://marcflament.free.fr/webgl-particles/particles.html)
+A demo can be found [here](http://marcflament.free.fr/webgl-particles)
