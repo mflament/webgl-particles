@@ -1,12 +1,8 @@
-# webgl-particles
+# Webgl particles renderer
+Renderer a lot of particles using webgl shader to update particles position and velocity and track the mouse cursor.
 
-webgl 2 particles tracking the mouse pointer.
+[Demo](http://marcflament.free.fr/demo/webgl-particles).
 
-Used TransformFeedback to update particles position and velocity using a vertex shader.
-
-[JS Fidlde](https://jsfiddle.net/eLqwrbzk/)
-
-left mouse button: repulse
-right mouse button: relax
-
-A demo can be found [here](http://marcflament.free.fr/webgl-particles)
+**No click** the particles will follow the cursor.   
+**Left-click** the particles will flee from cursor.   
+**Right-click** the particles will keep current heading.

@@ -1,0 +1,41 @@
+{
+  "files": [
+    "src/index.ts"
+  ],
+  "exclude": [
+    "node_modules/**"
+  ],
+  "compilerOptions": {
+    "outDir": "dist/",
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "lib": [
+      "ESNext",
+      "DOM"
+    ],
+    "sourceMap": true,
+    "declaration": true,
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "allowJs": false,
+    "allowUmdGlobalAccess": false,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "noImplicitReturns": true,
+    "strictFunctionTypes": true,
+    "alwaysStrict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "ts-node": {
+    "compilerOptions": {
+      "target": "ES5",
+      "module": "CommonJS",
+      "esModuleInterop": true
+    }
+  }
+}
